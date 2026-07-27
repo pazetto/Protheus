@@ -1,3 +1,6 @@
+#include "tlpp-core.th"
+#include "totvs.ch"
+#include "protheus.ch"
 
 /*/{Protheus.doc} ConvertTimeStamp
 Converte um timestamp em uma data no formato do ambiente Protheus (geralmente DD/MM/YYYY).

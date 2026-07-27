@@ -1,0 +1,293 @@
+#include "tlpp-core.th"
+#include "totvs.ch"
+#include "protheus.ch"
+
+Static cDirSrv := "\arraytotext\"
+
+/*/{Protheus.doc} ArrayToText
+Ferramenta de depuração de arrays. Abre uma janela onde o usuário digita uma expressão AdvPL/TL++ qualquer 
+@type function
+@version 1.0
+@author felipe.pazetto
+@since 22/07/2026
+@obs A expressão deve ser autocontida (somente literais e variáveis públicas do ambiente, como dDataBase, cEmpAnt e cFilAnt).
+@see custom_RelLoteRetro.tlpp (função AdicTerceiros / SaldoTerc)
+/*/
+User Function ArrayToText()
+
+    Local cExpr := ""                                             as character
+    Local oBtnFec                                                 as object
+    Local oBtnOk                                                  as object
+    Local oDlg                                                    as object
+    Local oMemoExp                                                as object
+
+    DEFINE MSDIALOG oDlg TITLE "ArrayToText - Depurador de Arrays" FROM 000, 000 TO 280, 640 PIXEL
+
+        @ 005, 005 SAY "Expressão a ser avaliada (o retorno será gravado no TXT):" SIZE 300, 008 OF oDlg PIXEL
+        @ 015, 005 GET oMemoExp VAR cExpr MEMO SIZE 300, 085 OF oDlg PIXEL
+
+        @ 105, 005 SAY "Dica: informe a chamada completa, com todos os parâmetros preenchidos." SIZE 300, 008 OF oDlg PIXEL
+
+        @ 120, 195 BUTTON oBtnOk  PROMPT "Executar" SIZE 052, 014 OF oDlg ACTION (ExecExpr(cExpr)) PIXEL
+        @ 120, 253 BUTTON oBtnFec PROMPT "Fechar"   SIZE 052, 014 OF oDlg ACTION (oDlg:End())      PIXEL
+
+    ACTIVATE MSDIALOG oDlg CENTERED
+
+Return Nil
+
+/*/{Protheus.doc} ExecExpr
+Avalia a expressão informada, monta o texto de saída e grava/abre o arquivo TXT.
+@type function
+@param cExpr, character, expressão a ser avaliada
+@since 22/07/2026
+@author felipe.pazetto
+/*/
+Static Function ExecExpr(cExpr)
+
+    Local bErrOld := ErrorBlock()                                 as codeblock
+    Local cErro   := ""                                           as character
+    Local cMacro  := ""                                           as character
+    Local cTexto  := ""                                           as character
+    Local lErro   := .F.                                          as logical
+    Local xRet                                                    as variant
+
+    If Empty(AllTrim(cExpr))
+        MsgStop("Informe a expressão a ser avaliada!", "Atenção")
+        Return Nil
+    EndIf
+
+    // O macro executor não aceita quebras de linha - a expressão vira uma linha única.
+    cMacro := AllTrim(StrTran(StrTran(cExpr, Chr(13), " "), Chr(10), " "))
+
+    ErrorBlock({|oErro| cErro := oErro:Description, lErro := .T., Break(oErro)})
+
+    Begin Sequence
+        xRet := &(cMacro)
+    End Sequence
+
+    ErrorBlock(bErrOld)
+
+    If lErro
+        MsgStop("Erro ao avaliar a expressão:" + CRLF + CRLF + cErro, "Atenção")
+        Return Nil
+    EndIf
+
+    cTexto := MontaTexto(cExpr, xRet)
+
+    GravaAbre(cTexto)
+
+Return Nil
+
+/*/{Protheus.doc} MontaTexto
+Monta o conteúdo do arquivo texto a partir do retorno da expressão.
+@since 22/07/2026
+@type function
+@param cExpr, character, expressão avaliada
+@param xRet, variant, retorno da expressão
+@return character, conteúdo formatado do arquivo
+@author felipe.pazetto
+/*/
+Static Function MontaTexto(cExpr, xRet)
+
+    Local aLinhas := {}                                           as array
+    Local cTexto  := ""                                           as character
+    Local cTipo   := ValType(xRet)                                as character
+    Local nI      := 0                                            as numeric
+
+    cTexto += Replicate("=", 100) + CRLF
+    cTexto += "ArrayToText - Depurador de Arrays" + CRLF
+    cTexto += Replicate("=", 100) + CRLF
+    cTexto += "Data/Hora .....: " + DToC(Date()) + " " + Time() + CRLF
+    cTexto += "Usuário .......: " + AllTrim(Substr(cUsuario, 6, 15)) + CRLF
+    cTexto += "Empresa/Filial : " + cEmpAnt + "/" + cFilAnt + CRLF
+    cTexto += "Data Base .....: " + DToC(dDataBase) + CRLF
+    cTexto += Replicate("-", 100) + CRLF
+    cTexto += "Expressão avaliada:" + CRLF
+    cTexto += "   " + AllTrim(cExpr) + CRLF
+    cTexto += Replicate("-", 100) + CRLF
+    cTexto += "Tipo do retorno: " + DescTipo(cTipo) + CRLF
+
+    If cTipo == "A"
+        cTexto += "Posições (1o nível): " + cValToChar(Len(xRet)) + CRLF
+    EndIf
+
+    cTexto += Replicate("=", 100) + CRLF + CRLF
+
+    // Retorno vazio: array sem elementos ou NIL.
+    If cTipo <> "A" .Or. Len(xRet) == 0
+        If cTipo == "A" .Or. cTipo == "U"
+            cTexto += "Não contém dados no array" + CRLF
+        Else
+            cTexto += "O retorno não é um array." + CRLF
+            cTexto += "Valor: " + FmtValor(xRet) + CRLF
+        EndIf
+        Return cTexto
+    EndIf
+
+    DumpArray(xRet, "aRet", @aLinhas)
+
+    For nI := 1 To Len(aLinhas)
+        cTexto += aLinhas[nI] + CRLF
+    Next nI
+
+    cTexto += CRLF + Replicate("=", 100) + CRLF
+    cTexto += "Total de linhas geradas: " + cValToChar(Len(aLinhas)) + CRLF
+    cTexto += Replicate("=", 100) + CRLF
+
+Return cTexto
+
+/*/{Protheus.doc} DumpArray
+Percorre recursivamente o array montando uma linha por posição, no formato
+aRet[1][2] <tipo> = valor. Arrays aninhados geram um cabeçalho e são detalhados
+logo abaixo, mantendo a notação completa da posição.
+@since 22/07/2026
+@type function
+@param aArr, array, array a ser percorrido
+@param cPrefix, character, notação da posição superior (ex.: aRet[1])
+@param aLinhas, array, array de saída (passado por referência)
+@author felipe.pazetto
+/*/
+Static Function DumpArray(aArr, cPrefix, aLinhas)
+
+    Local cPos := ""                                              as character
+    Local nI   := 0                                               as numeric
+    Local xVal                                                    as variant
+
+    For nI := 1 To Len(aArr)
+
+        cPos := cPrefix + "[" + cValToChar(nI) + "]"
+        xVal := aArr[nI]
+
+        If ValType(xVal) == "A"
+            aAdd(aLinhas, PadR(cPos, 30) + " <array> com " + cValToChar(Len(xVal)) + " posições")
+            If Len(xVal) == 0
+                aAdd(aLinhas, PadR(cPos, 30) + " (array vazio)")
+            Else
+                DumpArray(xVal, cPos, @aLinhas)
+            EndIf
+        Else
+            aAdd(aLinhas, PadR(cPos, 30) + " " + PadR(DescTipo(ValType(xVal)), 22) + " = " + FmtValor(xVal))
+        EndIf
+
+    Next nI
+
+Return Nil
+
+/*/{Protheus.doc} FmtValor
+Converte qualquer tipo de dado em texto legível para o arquivo de saída.
+@type function
+@param xVal, variant, valor a ser formatado
+@return character, valor em formato texto
+@author felipe.pazetto
+@since 22/07/2026
+/*/
+Static Function FmtValor(xVal)
+
+    Local cRet  := ""                                             as character
+    Local cTipo := ValType(xVal)                                  as character
+
+    Do Case
+        Case cTipo == "C"
+            cRet := '"' + xVal + '"  (tam. ' + cValToChar(Len(xVal)) + ")"
+        Case cTipo == "M"
+            cRet := '"' + xVal + '"  (memo)'
+        Case cTipo == "N"
+            cRet := cValToChar(xVal)
+        Case cTipo == "D"
+            cRet := IIf(Empty(xVal), "  /  /    (data vazia)", DToC(xVal))
+        Case cTipo == "L"
+            cRet := IIf(xVal, ".T.", ".F.")
+        Case cTipo == "U"
+            cRet := "NIL"
+        Case cTipo == "B"
+            cRet := "{|| ... } (code block)"
+        Case cTipo == "J"
+            cRet := FWJsonSerialize(xVal, .F., .F., .T.)
+        Case cTipo == "O"
+            If Upper(xVal:ClassName()) == "JSONOBJECT"
+                cRet := xVal:ToJson()
+            Else
+                cRet := "Objeto da classe " + xVal:ClassName()
+            EndIf
+        Otherwise
+            cRet := cValToChar(xVal)
+    EndCase
+
+Return cRet
+
+/*/{Protheus.doc} DescTipo
+Descreve o tipo retornado pelo ValType.
+@since 22/07/2026
+@type function
+@param cTipo, character, retorno do ValType
+@return character, descrição do tipo
+@author felipe.pazetto
+/*/
+Static Function DescTipo(cTipo)
+
+    Local cRet := ""                                              as character
+
+    Do Case
+        Case cTipo == "A" ; cRet := "A (array)"
+        Case cTipo == "B" ; cRet := "B (code block)"
+        Case cTipo == "C" ; cRet := "C (character)"
+        Case cTipo == "D" ; cRet := "D (date)"
+        Case cTipo == "J" ; cRet := "J (json)"
+        Case cTipo == "L" ; cRet := "L (logical)"
+        Case cTipo == "M" ; cRet := "M (memo)"
+        Case cTipo == "N" ; cRet := "N (numeric)"
+        Case cTipo == "O" ; cRet := "O (object)"
+        Case cTipo == "U" ; cRet := "U (nil)"
+        Otherwise         ; cRet := cTipo
+    EndCase
+
+Return cRet
+
+/*/{Protheus.doc} GravaAbre
+Grava o texto em um arquivo TXT no servidor, copia para a estação e abre o
+arquivo automaticamente.
+@since 22/07/2026
+@type function
+@param cTexto, character, conteúdo a ser gravado
+@author felipe.pazetto
+@obs O caminho de gravação no servidor é relativo ao RootPath do ambiente.
+/*/
+Static Function GravaAbre(cTexto)
+
+    Local cArqCli := ""                                           as character
+    Local cArqSrv := ""                                           as character
+    Local cDirCli := ""                                           as character
+    Local cNome   := ""                                           as character
+    Local nRet    := 0                                            as numeric
+
+    cNome   := "ArrayToText_" + DToS(Date()) + "_" + StrTran(Time(), ":", "") + ".txt"
+    cArqSrv := cDirSrv + cNome
+    cDirCli := GetTempPath()
+
+    If Empty(cDirCli)
+        cDirCli := "C:\Temp\"
+    EndIf
+
+    If !ExistDir(cDirSrv)
+        MakeDir(cDirSrv)
+    EndIf
+
+    If !MemoWrite(cArqSrv, cTexto)
+        MsgStop("Não foi possível gravar o arquivo <b>" + cArqSrv + "</b> no servidor!", "Atenção")
+        Return Nil
+    EndIf
+
+    // Traz o arquivo do servidor para a estação para permitir a abertura automática.
+    If !CpyS2T(cArqSrv, cDirCli, .T.)
+        MsgStop("Arquivo gravado no servidor em <b>" + cArqSrv + "</b>, porém não foi possível copiá-lo para a estação.", "Atenção")
+        Return Nil
+    EndIf
+
+    cArqCli := cDirCli + cNome
+    nRet    := ShellExecute("open", cNome, "", cDirCli, 1)
+
+    If nRet <= 32
+        MsgStop("Não foi possível abrir o arquivo <b>" + cArqCli + "</b>!", "Atenção")
+    EndIf
+
+Return Nil
